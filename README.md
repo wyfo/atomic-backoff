@@ -18,7 +18,8 @@ Atomic types are extended with `try_update_with_backoff`/`update_with_backoff` m
 mirroring their std `try_update`/`update` counterparts.
 
 For handwritten CAS loops, see `BackoffStrategy::backoff_reload` and `BackoffState`;
-for spin loops, see `BackoffStrategy::backoff_until`.
+for spin loops, see `BackoffStrategy::backoff_until`, or `BoundedBackoffStrategy` to spin
+a bounded number of iterations before falling back to a slower waiting mechanism.
 
 ## Example
 

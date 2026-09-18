@@ -14,7 +14,8 @@
 //! mirroring their std `try_update`/`update` counterparts.
 //!
 //! For handwritten CAS loops, see [`BackoffStrategy::backoff_reload`] and [`BackoffState`];
-//! for spin loops, see [`BackoffStrategy::backoff_until`].
+//! for spin loops, see [`BackoffStrategy::backoff_until`], or [`BoundedBackoffStrategy`] to spin
+//! a bounded number of iterations before falling back to a slower waiting mechanism.
 //!
 //! # Examples
 //!
@@ -149,7 +150,7 @@ pub trait BackoffStrategy: Default + Send + Sync + 'static {
         }
     }
 
-    /// Loops until a condition is fulfilled, performing backoff at each iteration.
+    /// Loops until a condition is satisfied, performing backoff at each iteration.
     #[inline]
     fn backoff_until<C: BackoffUntilCondition, F: FnMut() -> C>(&mut self, mut f: F) -> C::Result {
         loop {
@@ -213,6 +214,98 @@ impl BackoffStrategy for NoBackoff {
     #[inline]
     fn backoff(&mut self) -> RetryStrategy {
         RetryStrategy::NoReload
+    }
+}
+
+impl BoundedBackoffStrategy for NoBackoff {
+    #[inline]
+    fn is_completed(&self) -> bool {
+        true
+    }
+}
+
+/// A [`BackoffStrategy`] which completes after a bounded number of iterations.
+///
+/// It is typically used to spin a bit before falling back to a slower waiting mechanism, like
+/// parking the thread.
+///
+/// # Examples
+///
+/// ```rust
+/// use std::sync::atomic::{AtomicBool, Ordering::Acquire};
+///
+/// use atomic_backoff::{BackoffLimit, BoundedBackoffStrategy, ExponentialBackoff};
+///
+/// fn wait(flag: &AtomicBool, park: impl Fn()) {
+///     let mut backoff = BackoffLimit::<ExponentialBackoff<6>, 10>::default();
+///     // Spin a bit, then park the thread if the flag is still not set.
+///     while backoff.try_backoff_until(|| flag.load(Acquire)).is_none() {
+///         park();
+///     }
+/// }
+/// ```
+pub trait BoundedBackoffStrategy: BackoffStrategy {
+    /// Returns `true` if the bounded number of iterations has been reached.
+    ///
+    /// [`backoff`](BackoffStrategy::backoff) can still be called afterward.
+    fn is_completed(&self) -> bool;
+
+    /// Loops until a condition is satisfied or the backoff is completed, performing backoff at
+    /// each iteration.
+    ///
+    /// Returns `None` if the backoff completed before the condition was satisfied.
+    #[inline]
+    fn try_backoff_until<C: BackoffUntilCondition, F: FnMut() -> C>(
+        &mut self,
+        mut f: F,
+    ) -> Option<C::Result> {
+        loop {
+            if let Some(res) = f().into_result() {
+                return Some(res);
+            }
+            if self.is_completed() {
+                return None;
+            }
+            self.backoff();
+        }
+    }
+}
+
+/// Wraps a [`BackoffStrategy`] to make it a [`BoundedBackoffStrategy`] completing after `LIMIT`
+/// iterations.
+#[derive(Debug, Default)]
+pub struct BackoffLimit<S, const LIMIT: usize> {
+    strategy: S,
+    iter: usize,
+}
+
+impl<S: BackoffStrategy, const LIMIT: usize> BackoffLimit<S, LIMIT> {
+    /// Wraps the given strategy.
+    pub fn new(strategy: S) -> Self {
+        Self { strategy, iter: 0 }
+    }
+}
+
+impl<S: BackoffStrategy, const LIMIT: usize> BackoffStrategy for BackoffLimit<S, LIMIT> {
+    const BACKOFF: bool = S::BACKOFF;
+
+    #[inline]
+    fn backoff(&mut self) -> RetryStrategy {
+        let retry = self.strategy.backoff();
+        self.iter = self.iter.saturating_add(1);
+        retry
+    }
+
+    #[inline]
+    fn will_reload(&self) -> bool {
+        self.strategy.will_reload()
+    }
+}
+
+impl<S: BackoffStrategy, const LIMIT: usize> BoundedBackoffStrategy for BackoffLimit<S, LIMIT> {
+    #[inline]
+    fn is_completed(&self) -> bool {
+        self.iter >= LIMIT
     }
 }
 
@@ -597,7 +690,7 @@ mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering::Relaxed};
     use std::{sync::Arc, thread};
 
-    use crate::{AtomicWithBackoffExt, NoBackoff};
+    use crate::{AtomicWithBackoffExt, BackoffLimit, BoundedBackoffStrategy, NoBackoff};
 
     /// Spawns two threads incrementing the same atomic, initialized to 0,
     /// and returns what each of them got.
@@ -632,5 +725,20 @@ mod tests {
             "{:?}",
             results
         );
+    }
+
+    #[test]
+    fn backoff_limit() {
+        let mut backoff = BackoffLimit::<NoBackoff, 2>::default();
+        let mut calls = 0;
+        let res = backoff.try_backoff_until(|| {
+            calls += 1;
+            false
+        });
+        assert_eq!(res, None);
+        assert_eq!(calls, 3);
+        assert!(backoff.is_completed());
+        assert_eq!(backoff.try_backoff_until(|| Some(42)), Some(42));
+        assert!(NoBackoff.is_completed());
     }
 }
