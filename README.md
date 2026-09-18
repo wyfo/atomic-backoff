@@ -6,20 +6,13 @@
 
 Customizable backoff strategies for compare-and-swap loops and spin loops.
 
-Compare-and-swap (CAS) loops and spin loops can often be optimized by adding backoff at each
-iteration, i.e. waiting a bit before the next iteration, in order to reduce the contention on
-the CPU's cache lines.
+Compare-and-swap (CAS) loops and spin loops can often be optimized by adding backoff at each iteration, i.e. waiting a bit before the next iteration, in order to reduce the contention on the CPU's cache lines.
 
-As the optimal backoff strategy depends on multiple factors, especially the expected
-contention, this crate provides a generic `BackoffStrategy` trait to help customize algorithms
-using CAS/spin loops. Typical backoff strategies like `ExponentialBackoff` are also provided.
+As the optimal backoff strategy depends on multiple factors, especially the expected contention, this crate provides a generic `BackoffStrategy` trait to help customize algorithms using CAS/spin loops. Typical backoff strategies like `ExponentialBackoff` are also provided.
 
-Atomic types are extended with `try_update_with_backoff`/`update_with_backoff` methods,
-mirroring their std `try_update`/`update` counterparts.
+Atomic types are extended with `try_update_with_backoff`/`update_with_backoff` methods, mirroring their std `try_update`/`update` counterparts.
 
-For handwritten CAS loops, see `BackoffStrategy::backoff_reload` and `BackoffState`;
-for spin loops, see `BackoffStrategy::backoff_until`, or `BoundedBackoffStrategy` to spin
-a bounded number of iterations before falling back to a slower waiting mechanism.
+For handwritten CAS loops, see `BackoffStrategy::backoff_reload` and `BackoffState`; for spin loops, see `BackoffStrategy::backoff_until`, or `BoundedBackoffStrategy` to spin a bounded number of iterations before falling back to a slower waiting mechanism.
 
 ## Example
 
@@ -30,7 +23,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use atomic_backoff::{AtomicExt, BackoffStrategy, ExponentialBackoff, NoBackoff};
+use atomic_backoff::{AtomicWithBackoffExt, BackoffStrategy, ExponentialBackoff, NoBackoff};
 
 fn parallel_increment<S: BackoffStrategy>(threads: usize, iterations: usize) -> Duration {
     let counter = AtomicUsize::new(0);
@@ -56,18 +49,13 @@ println!("no backoff: {no_backoff:?}, exponential backoff: {exponential:?}");
 
 ## Retry strategies
 
-Unlike most backoff implementations, a `BackoffStrategy` doesn't only decide *how long* to wait
-after a failed CAS, but also *what to do with the atomic value* before retrying, through the
-`RetryStrategy` variant it returns:
+Unlike most backoff implementations, a `BackoffStrategy` doesn't only decide *how long* to wait after a failed CAS, but also *what to do with the atomic value* before retrying, through the `RetryStrategy` variant it returns:
 
 - `NoReload`: retry with the value returned by the failed CAS;
 - `Reload`: reload the atomic and retry with the up-to-date value;
-- `ReloadUntilUnchanged`: reload the atomic and keep backing off while its value changes between
-  reloads, then retry with the up-to-date value.
+- `ReloadUntilUnchanged`: reload the atomic and keep backing off while its value changes between reloads, then retry with the up-to-date value.
 
-`ReloadUntilUnchanged` avoids attempting a CAS while the atomic is being actively modified, which
-significantly reduces the number of failed CAS under contention, and the contention itself. However, it should only be
-returned for a bounded number of iterations, as it could otherwise lead to starvation under sustained contention.
+`ReloadUntilUnchanged` avoids attempting a CAS while the atomic is being actively modified, which significantly reduces the number of failed CAS under contention, and the contention itself. However, it should only be returned for a bounded number of iterations, as it could otherwise lead to starvation under sustained contention.
 
 ## Comparison with [`crossbeam::utils::Backoff`](https://docs.rs/crossbeam/latest/crossbeam/utils/struct.Backoff.html)
 
@@ -86,16 +74,12 @@ Running the example above with `ExponentialBackoff<6, N>` for different values o
 
 ## Features
 
-- `std` (default): enables `std::thread::yield_now` in `ExponentialBackoff` (`YIELD_AFTER`
-  parameter). Without it, the crate is `no_std` and `ExponentialBackoff` keeps spinning instead
-  of yielding.
+- `std` (default): enables `std::thread::yield_now` in `ExponentialBackoff` (`YIELD_AFTER` parameter). Without it, the crate is `no_std` and `ExponentialBackoff` keeps spinning instead of yielding.
 - `portable-atomic`: extends [`portable-atomic`](https://docs.rs/portable-atomic) atomic types to support `try_update_with_backoff`/`update_with_backoff`.
 
 ## Loom support
 
-[`loom`](https://docs.rs/loom) atomic types are also extended to support  `try_update_with_backoff`/`update_with_backoff` when compiled with
-`--cfg loom`, so that algorithms built on this crate can be model-checked with loom without any
-feature flag.
+[`loom`](https://docs.rs/loom) atomic types are also extended to support `try_update_with_backoff`/`update_with_backoff` when compiled with `--cfg loom`, so that algorithms built on this crate can be model-checked with loom without any feature flag.
 
 ## License
 
