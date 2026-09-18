@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features: [ --no-default-features, --all-features ]
+    steps:
+      - uses: actions/checkout@v4
+      - name: update toolchain
+        run: rustup update stable && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.features }}
+      - name: rustfmt
+        run: cargo fmt -- --check --config "unstable_features=true,imports_granularity=Crate,group_imports=StdExternalCrate,format_code_in_doc_comments=true"
+      - name: clippy
+        run: cargo clippy ${{ matrix.features }} --all-targets -- -D warnings
+      - name: test
+        run: cargo test ${{ matrix.features }}
+      - name: check doc
+        run: cargo doc ${{ matrix.features }}
+        env:
+          RUSTDOCFLAGS: "-Dwarnings"
+
+  loom:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: update toolchain
+        run: rustup update stable && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy
+        run: cargo clippy --all-features --all-targets -- -D warnings
+        env:
+          RUSTFLAGS: "--cfg loom"
+
+  msrv:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install toolchain
+        run: rustup install 1.60 --profile minimal && rustup default 1.60
+      - uses: Swatinem/rust-cache@v2
+      - name: build
+        run: cargo build --all-features

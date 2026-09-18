@@ -1,0 +1,38 @@
+[package]
+name = "atomic-backoff"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/wyfo/atomic-backoff"
+keywords = [
+    "atomic",
+    "backoff",
+    "lock-free",
+    "no-std",
+    "spin",
+]
+categories = [
+    "concurrency",
+    "no-std",
+]
+repository = "https://github.com/wyfo/atomic-backoff"
+description = "Customizable backoff strategies for compare-and-swap loops and spin loops."
+rust-version = "1.60"
+
+[features]
+default = ["std"]
+portable-atomic = ["dep:portable-atomic"]
+std = []
+
+[dependencies]
+portable-atomic = { version = "1", optional = true, default-features = false }
+
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
+[lints.clippy]
+dbg_macro = "warn"
+semicolon_if_nothing_returned = "warn"
